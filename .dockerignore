@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.offerlens
+**/__pycache__
+**/.pytest_cache
+**/.next
+**/node_modules
+*.pyc
+*.log
+.env

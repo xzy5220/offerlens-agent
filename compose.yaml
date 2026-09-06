@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      OFFERLENS_MODE: ${OFFERLENS_MODE:-demo}
+      OFFERLENS_MODEL: ${OFFERLENS_MODEL:-openai:gpt-4.1-mini}
+      OFFERLENS_SEARCH_PROVIDER: ${OFFERLENS_SEARCH_PROVIDER:-fixture}
+      OFFERLENS_CHECKPOINT_BACKEND: sqlite
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - offerlens-data:/app/.offerlens
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  offerlens-data:

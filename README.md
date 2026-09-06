@@ -1,149 +1,196 @@
-# 🔬 Open Deep Research
+# OfferLens AI
 
-<img width="1388" height="298" alt="full_diagram" src="https://github.com/user-attachments/assets/12a2371b-8be2-4219-9b48-90503eb43c69" />
+> 用证据回答“我适合这个岗位吗？”——基于 LangGraph 的多智能体岗位分析与面试准备平台。
 
-Deep research has broken out as one of the most popular agent applications. This is a simple, configurable, fully open source deep research agent that works across many model providers, search tools, and MCP servers. It's performance is on par with many popular deep research agents ([see Deep Research Bench leaderboard](https://huggingface.co/spaces/Ayanami0730/DeepResearch-Leaderboard)).
+[![CI](https://github.com/xzy5220/offerlens-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/xzy5220/offerlens-agent/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1.x-1C3C3C)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-<img width="817" height="666" alt="Screenshot 2025-07-13 at 11 21 12 PM" src="https://github.com/user-attachments/assets/052f2ed3-c664-4a4f-8ec2-074349dcaa3f" />
+OfferLens 接收一份简历和一个岗位描述，由专业 Agent 团队并行完成简历解析、JD 拆解、公司与岗位研究、证据匹配、质量审查和面试计划，最终生成所有结论可回溯到简历原文或研究来源的求职报告。
 
-### 🔥 Recent Updates
+它不是一个套了聊天界面的 Prompt Demo。核心流程使用 LangGraph 的并行分支、动态 `Send`、共享状态 reducer、反思循环、checkpoint 和 `interrupt/resume` 人工审批。
 
-**August 14, 2025**: See our free course [here](https://academy.langchain.com/courses/deep-research-with-langgraph) (and course repo [here](https://github.com/langchain-ai/deep_research_from_scratch)) on building open deep research.
+## 解决什么问题
 
-**August 7, 2025**: Added GPT-5 and updated the Deep Research Bench evaluation w/ GPT-5 results.
+普通求职助手经常给出“你很适合”“建议突出领导力”之类无法验证的结论。OfferLens 设置了两道硬约束：
 
-**August 2, 2025**: Achieved #6 ranking on the [Deep Research Bench Leaderboard](https://huggingface.co/spaces/Ayanami0730/DeepResearch-Leaderboard) with an overall score of 0.4344. 
+1. 正向技能匹配必须引用简历原文；没有证据就只能标记为缺口或部分相关。
+2. 公司与岗位研究必须保留来源；检索失败时明确降级，不能把模型猜测当事实。
 
-**July 30, 2025**: Read about the evolution from our original implementations to the current version in our [blog post](https://rlancemartin.github.io/2025/07/30/bitter_lesson/).
+最终输出包括：
 
-**July 16, 2025**: Read more in our [blog](https://blog.langchain.com/open-deep-research/) and watch our [video](https://www.youtube.com/watch?v=agGiWUpxkhg) for a quick overview.
+- 0–100 岗位匹配分与逐项依据
+- 已验证优势和优先能力缺口
+- 公司、岗位、市场与面试研究摘要
+- 不虚构经历的简历优化建议
+- 针对岗位要求生成的面试问题与回答框架
+- 7 天投递准备计划
 
-### 🚀 Quickstart
+## Agent 架构
 
-1. Clone the repository and activate a virtual environment:
+```mermaid
+flowchart TD
+    S([START]) --> RA[Resume Analyst]
+    S --> JA[JD Analyst]
+    RA --> RS[Research Supervisor]
+    JA --> RS
+    RS -. dynamic Send .-> CR[Company Researcher]
+    RS -. dynamic Send .-> RR[Role Researcher]
+    RS -. dynamic Send .-> IR[Interview Researcher]
+    RS -. dynamic Send .-> MR[Market Researcher]
+    CR --> EM[Resume RAG & Evidence Matcher]
+    RR --> EM
+    IR --> EM
+    MR --> EM
+    EM --> CS[Career Strategist]
+    CS --> GC[Grounding Critic]
+    GC -->|quality failed| RV[Report Reviser]
+    RV --> GC
+    GC -->|quality passed| HITL{Human Approval}
+    HITL -->|interrupt / resume| E([END])
+    HITL -->|feedback| RV
+```
+
+详细的数据流、状态设计和失败策略见 [架构说明](docs/architecture.md)。
+
+## 技术栈
+
+| 层 | 实现 |
+|---|---|
+| Agent 编排 | LangGraph：并行节点、动态 fan-out、条件路由、循环、checkpoint、HITL |
+| LLM 应用 | LangChain：统一模型接口、结构化输出、重试、文档切分、向量存储 |
+| RAG | Resume chunking + `InMemoryVectorStore` + 本地可复现 Hash Embeddings |
+| 在线推理 | OpenAI 兼容模型，通过 `init_chat_model` 切换；所有输出由 Pydantic 校验 |
+| 搜索 | 离线 fixture、Tavily 或 DuckDuckGo 可插拔 provider |
+| 后端 | FastAPI、SSE Agent 事件流、SQLite LangGraph checkpoint |
+| 前端 | Next.js 16、React 19、TypeScript、响应式 Agent 工作台 |
+| Agent 互操作 | MCP stdio server，暴露岗位提取与完整分析工具 |
+| 质量 | pytest、离线回归数据集、证据覆盖率、引用覆盖率、LangSmith tracing |
+| 工程化 | Docker Compose、GitHub Actions、Dependabot、ruff、mypy |
+
+## 3 分钟本地启动
+
+要求：Python 3.11+、Node.js 22+。默认演示模式不需要 API Key，也不联网。
+
+### 1. 启动后端
+
+```powershell
+git clone https://github.com/xzy5220/offerlens-agent.git
+cd offerlens-agent
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev,mcp,search]"
+Copy-Item .env.example .env
+offerlens-api
+```
+
+API 文档位于 <http://127.0.0.1:8000/docs>。
+
+### 2. 启动前端
+
+```powershell
+cd apps\web
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+访问 <http://localhost:3000>，点击“载入演示数据”即可体验完整 Agent 流程。
+
+### 3. Docker 启动
+
 ```bash
-git clone https://github.com/langchain-ai/open_deep_research.git
-cd open_deep_research
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+docker compose up --build
 ```
 
-2. Install dependencies:
-```bash
-uv sync
-# or
-uv pip install -r pyproject.toml
+## 切换到真实模型和网络搜索
+
+编辑根目录 `.env`：
+
+```dotenv
+OFFERLENS_MODE=live
+OFFERLENS_MODEL=openai:gpt-4.1-mini
+OFFERLENS_SEARCH_PROVIDER=tavily
+OPENAI_API_KEY=your-key
+TAVILY_API_KEY=your-key
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your-key
+LANGSMITH_PROJECT=offerlens-agent
 ```
 
-3. Set up your `.env` file to customize the environment variables (for model selection, search tools, and other configuration settings):
-```bash
-cp .env.example .env
+真实模型模式仍会经过确定性的 Evidence Matcher 和 Grounding Critic；模型不能修改程序计算出的匹配分、简历证据或来源列表。
+
+## API 与实时事件
+
+主要接口：
+
+| Method | Endpoint | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/analyses` | 使用简历文本创建分析 |
+| `POST` | `/api/v1/analyses/upload` | 上传 PDF、DOCX、TXT 或 Markdown 简历 |
+| `GET` | `/api/v1/analyses/{id}` | 查询报告与质量状态 |
+| `GET` | `/api/v1/analyses/{id}/events` | SSE 实时 Agent 执行轨迹 |
+| `POST` | `/api/v1/analyses/{id}/decision` | 恢复被人工审批中断的 LangGraph 线程 |
+
+启用人工审批：
+
+```dotenv
+OFFERLENS_REQUIRE_APPROVAL=true
 ```
 
-4. Launch agent with the LangGraph server locally:
+## MCP Server
 
-```bash
-# Install dependencies and start the LangGraph server
-uvx --refresh --from "langgraph-cli[inmem]" --with-editable . --python 3.11 langgraph dev --allow-blocking
+OfferLens 可作为工具接入支持 MCP 的 Agent 客户端：
+
+```json
+{
+  "mcpServers": {
+    "offerlens": {
+      "command": "D:/Agent/offerlens-agent/.venv/Scripts/offerlens-mcp.exe"
+    }
+  }
+}
 ```
 
-This will open the LangGraph Studio UI in your browser.
+提供两个工具：`extract_job_requirements` 和 `analyze_job_fit`。
 
-```
-- 🚀 API: http://127.0.0.1:2024
-- 🎨 Studio UI: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
-- 📚 API Docs: http://127.0.0.1:2024/docs
-```
+## Agent 评测
 
-Ask a question in the `messages` input field and click `Submit`. Select different configuration in the "Manage Assistants" tab.
-
-### ⚙️ Configurations
-
-#### LLM :brain:
-
-Open Deep Research supports a wide range of LLM providers via the [init_chat_model() API](https://python.langchain.com/docs/how_to/chat_models_universal_init/). It uses LLMs for a few different tasks. See the below model fields in the [configuration.py](https://github.com/langchain-ai/open_deep_research/blob/main/src/open_deep_research/configuration.py) file for more details. This can be accessed via the LangGraph Studio UI. 
-
-- **Summarization** (default: `openai:gpt-4.1-mini`): Summarizes search API results
-- **Research** (default: `openai:gpt-4.1`): Power the search agent
-- **Compression** (default: `openai:gpt-4.1`): Compresses research findings
-- **Final Report Model** (default: `openai:gpt-4.1`): Write the final report
-
-> Note: the selected model will need to support [structured outputs](https://python.langchain.com/docs/integrations/chat/) and [tool calling](https://python.langchain.com/docs/how_to/tool_calling/).
-
-> Note: For OpenRouter: Follow [this guide](https://github.com/langchain-ai/open_deep_research/issues/75#issuecomment-2811472408) and for local models via Ollama  see [setup instructions](https://github.com/langchain-ai/open_deep_research/issues/65#issuecomment-2743586318).
-
-#### Search API :mag:
-
-Open Deep Research supports a wide range of search tools. By default it uses the [Tavily](https://www.tavily.com/) search API. Has full MCP compatibility and work native web search for Anthropic and OpenAI. See the `search_api` and `mcp_config` fields in the [configuration.py](https://github.com/langchain-ai/open_deep_research/blob/main/src/open_deep_research/configuration.py) file for more details. This can be accessed via the LangGraph Studio UI. 
-
-#### Other 
-
-See the fields in the [configuration.py](https://github.com/langchain-ai/open_deep_research/blob/main/src/open_deep_research/configuration.py) for various other settings to customize the behavior of Open Deep Research. 
-
-### 📊 Evaluation
-
-Open Deep Research is configured for evaluation with [Deep Research Bench](https://huggingface.co/spaces/Ayanami0730/DeepResearch-Leaderboard). This benchmark has 100 PhD-level research tasks (50 English, 50 Chinese), crafted by domain experts across 22 fields (e.g., Science & Tech, Business & Finance) to mirror real-world deep-research needs. It has 2 evaluation metrics, but the leaderboard is based on the RACE score. This uses LLM-as-a-judge (Gemini) to evaluate research reports against a golden set of reports compiled by experts across a set of metrics.
-
-#### Usage
-
-> Warning: Running across the 100 examples can cost ~$20-$100 depending on the model selection.
-
-The dataset is available on [LangSmith via this link](https://smith.langchain.com/public/c5e7a6ad-fdba-478c-88e6-3a388459ce8b/d). To kick off evaluation, run the following command:
-
-```bash
-# Run comprehensive evaluation on LangSmith datasets
-python tests/run_evaluate.py
+```powershell
+pytest
+offerlens-eval --dataset data/evals/career_cases.jsonl
 ```
 
-This will provide a link to a LangSmith experiment, which will have a name `YOUR_EXPERIMENT_NAME`. Once this is done, extract the results to a JSONL file that can be submitted to the Deep Research Bench.
+评测不仅检查“输出像不像答案”，还检查技能与缺口召回率、证据覆盖、引用覆盖，以及简历建议是否包含虚构经历。数据格式和扩展方法见 [评测说明](docs/evaluation.md)。
 
-```bash
-python tests/extract_langsmith_data.py --project-name "YOUR_EXPERIMENT_NAME" --model-name "you-model-name" --dataset-name "deep_research_bench"
+## 项目结构
+
+```text
+offerlens-agent/
+├── apps/web/                       # Next.js 可视化工作台
+├── data/evals/                     # 可版本控制的 Agent 回归集
+├── docs/                           # 架构、评测和学习文档
+├── src/offerlens_agent/
+│   ├── api/                        # FastAPI、SSE、运行管理
+│   ├── domain/                     # Pydantic 领域模型
+│   ├── evaluation/                 # 离线评测指标和 CLI
+│   ├── services/                   # LLM、搜索、RAG、证据与质量门禁
+│   ├── workflow/                   # LangGraph 状态和图
+│   └── mcp_server.py               # MCP stdio server
+├── tests/unit/                     # 领域与安全约束测试
+├── tests/integration/              # Graph、HITL 和 API 测试
+├── compose.yaml
+└── langgraph.json                  # LangGraph Studio 入口
 ```
 
-This creates `tests/expt_results/deep_research_bench_model-name.jsonl` with the required format. Move the generated JSONL file to a local clone of the Deep Research Bench repository and follow their [Quick Start guide](https://github.com/Ayanami0730/deep_research_bench?tab=readme-ov-file#quick-start) for evaluation submission.
+## 开源来源与独立改造
 
-#### Results 
+本项目以 LangChain 官方 [Open Deep Research](https://github.com/langchain-ai/open_deep_research) 为研究思路和初始 Git 历史来源，并遵循其 MIT 许可证。OfferLens 保留上游研究 Agent 作为对照，但产品领域模型、岗位工作流、简历 RAG、证据门禁、API、MCP、前端和评测集均为独立实现。
 
-| Name | Commit | Summarization | Research | Compression | Total Cost | Total Tokens | RACE Score | Experiment |
-|------|--------|---------------|----------|-------------|------------|--------------|------------|------------|
-| GPT-5 | [ca3951d](https://github.com/langchain-ai/open_deep_research/pull/168/commits) | openai:gpt-4.1-mini | openai:gpt-5 | openai:gpt-4.1 |  | 204,640,896 | 0.4943 | [Link](https://smith.langchain.com/o/ebbaf2eb-769b-4505-aca2-d11de10372a4/datasets/6e4766ca-613c-4bda-8bde-f64f0422bbf3/compare?selectedSessions=4d5941c8-69ce-4f3d-8b3e-e3c99dfbd4cc&baseline=undefined) |
-| Defaults | [6532a41](https://github.com/langchain-ai/open_deep_research/commit/6532a4176a93cc9bb2102b3d825dcefa560c85d9) | openai:gpt-4.1-mini | openai:gpt-4.1 | openai:gpt-4.1 | $45.98 | 58,015,332 | 0.4309 | [Link](https://smith.langchain.com/o/ebbaf2eb-769b-4505-aca2-d11de10372a4/datasets/6e4766ca-6[…]ons=cf4355d7-6347-47e2-a774-484f290e79bc&baseline=undefined) |
-| Claude Sonnet 4 | [f877ea9](https://github.com/langchain-ai/open_deep_research/pull/163/commits/f877ea93641680879c420ea991e998b47aab9bcc) | openai:gpt-4.1-mini | anthropic:claude-sonnet-4-20250514 | openai:gpt-4.1 | $187.09 | 138,917,050 | 0.4401 | [Link](https://smith.langchain.com/o/ebbaf2eb-769b-4505-aca2-d11de10372a4/datasets/6e4766ca-6[…]ons=04f6002d-6080-4759-bcf5-9a52e57449ea&baseline=undefined) |
-| Deep Research Bench Submission | [c0a160b](https://github.com/langchain-ai/open_deep_research/commit/c0a160b57a9b5ecd4b8217c3811a14d8eff97f72) | openai:gpt-4.1-nano | openai:gpt-4.1 | openai:gpt-4.1 | $87.83 | 207,005,549 | 0.4344 | [Link](https://smith.langchain.com/o/ebbaf2eb-769b-4505-aca2-d11de10372a4/datasets/6e4766ca-6[…]ons=e6647f74-ad2f-4cb9-887e-acb38b5f73c0&baseline=undefined) |
+完整差异见 [UPSTREAM.md](UPSTREAM.md)。
 
-### 🚀 Deployments and Usage
+## License
 
-#### LangGraph Studio
-
-Follow the [quickstart](#-quickstart) to start LangGraph server locally and test the agent out on LangGraph Studio.
-
-#### Hosted deployment
- 
-You can easily deploy to [LangGraph Platform](https://langchain-ai.github.io/langgraph/concepts/#deployment-options). 
-
-#### Open Agent Platform
-
-Open Agent Platform (OAP) is a UI from which non-technical users can build and configure their own agents. OAP is great for allowing users to configure the Deep Researcher with different MCP tools and search APIs that are best suited to their needs and the problems that they want to solve.
-
-We've deployed Open Deep Research to our public demo instance of OAP. All you need to do is add your API Keys, and you can test out the Deep Researcher for yourself! Try it out [here](https://oap.langchain.com)
-
-You can also deploy your own instance of OAP, and make your own custom agents (like Deep Researcher) available on it to your users.
-1. [Deploy Open Agent Platform](https://docs.oap.langchain.com/quickstart)
-2. [Add Deep Researcher to OAP](https://docs.oap.langchain.com/setup/agents)
-
-### Legacy Implementations 🏛️
-
-The `src/legacy/` folder contains two earlier implementations that provide alternative approaches to automated research. They are less performant than the current implementation, but provide alternative ideas understanding the different approaches to deep research.
-
-#### 1. Workflow Implementation (`legacy/graph.py`)
-- **Plan-and-Execute**: Structured workflow with human-in-the-loop planning
-- **Sequential Processing**: Creates sections one by one with reflection
-- **Interactive Control**: Allows feedback and approval of report plans
-- **Quality Focused**: Emphasizes accuracy through iterative refinement
-
-#### 2. Multi-Agent Implementation (`legacy/multi_agent.py`)  
-- **Supervisor-Researcher Architecture**: Coordinated multi-agent system
-- **Parallel Processing**: Multiple researchers work simultaneously
-- **Speed Optimized**: Faster report generation through concurrency
-- **MCP Support**: Extensive Model Context Protocol integration
+[MIT](LICENSE)
