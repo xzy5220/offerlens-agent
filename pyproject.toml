@@ -51,7 +51,7 @@ upstream-providers = [
     "langchain-google-genai>=3.0,<5",
 ]
 dev = [
-    "mypy>=1.11,<2",
+    "mypy>=1.11,<3",
     "pytest>=8,<10",
     "pytest-asyncio>=0.24,<2",
     "pytest-cov>=5,<8",
